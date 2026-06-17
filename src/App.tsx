@@ -1,11 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { useGoogleLogin } from '@react-oauth/google';
+import React, { useState, useRef } from 'react';
 import Tesseract from 'tesseract.js';
-
-const TARGET_FOLDER_ID = '1X7xdyeOm-MbJgjgoW63-ZW2qgKokgJW_'; // Extracted from user URL
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 
 function App() {
-  const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -13,15 +10,6 @@ function App() {
   const streamRef = useRef<MediaStream | null>(null);
   const intervalRef = useRef<number | null>(null);
   const sessionTextRef = useRef<string>('');
-
-  const login = useGoogleLogin({
-    onSuccess: (codeResponse) => {
-      setAccessToken(codeResponse.access_token);
-      addLog('Successfully logged in with Google.');
-    },
-    onError: (error) => addLog('Login Failed: ' + error),
-    scope: 'https://www.googleapis.com/auth/drive.file',
-  });
 
   const addLog = (msg: string) => {
     setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
@@ -63,8 +51,8 @@ function App() {
     }
     addLog('Screen monitoring stopped.');
 
-    if (accessToken && sessionTextRef.current.trim().length > 0) {
-      await saveToDrive(sessionTextRef.current);
+    if (sessionTextRef.current.trim().length > 0) {
+      await saveLocally(sessionTextRef.current);
     }
   };
 
@@ -86,7 +74,7 @@ function App() {
     
     try {
       const { data: { text } } = await Tesseract.recognize(dataUrl, 'eng', {
-        logger: m => {} // suppress progress logs to save resources
+        logger: () => {} // suppress progress logs to save resources
       });
       
       const cleanText = text.trim();
@@ -101,40 +89,33 @@ function App() {
     }
   };
 
-  const saveToDrive = async (text: string) => {
-    if (!accessToken) {
-      addLog('No Google access token, cannot save to Drive.');
-      return;
-    }
-    addLog('Saving session to Google Drive...');
+  const saveLocally = async (text: string) => {
+    addLog('Saving session to device locally...');
     
-    const file = new Blob([text], { type: 'text/plain' });
-    const metadata = {
-      name: `ScreenMonitor_Session_${new Date().toISOString().replace(/:/g, '-')}.txt`,
-      mimeType: 'text/plain',
-      parents: [TARGET_FOLDER_ID]
-    };
-
-    const form = new FormData();
-    form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-    form.append('file', file);
+    const fileName = `ScreenMonitor_Session_${new Date().toISOString().replace(/:/g, '-')}.txt`;
 
     try {
-      const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: form,
+      // Capacitor Filesystem API
+      await Filesystem.writeFile({
+        path: fileName,
+        data: text,
+        directory: Directory.Documents,
+        encoding: Encoding.UTF8,
       });
-      const data = await response.json();
-      if (response.ok) {
-        addLog(`Successfully saved to Drive: ${data.name}`);
-      } else {
-        addLog(`Drive API Error: ${data.error?.message || 'Unknown error'}`);
-      }
+      addLog(`Successfully saved file: ${fileName} in Documents`);
     } catch (err) {
-      addLog(`Error uploading to Drive: ${err}`);
+      addLog(`Capacitor file write failed. Falling back to web download... Error: ${err}`);
+      
+      // Fallback for Web browser
+      const blob = new Blob([text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     }
   };
 
@@ -145,25 +126,18 @@ function App() {
       </header>
       
       <main>
-        {!accessToken ? (
-          <div className="auth-section">
-            <p>Please log in with Google to enable Drive uploads.</p>
-            <button onClick={() => login()} className="btn primary">Login with Google</button>
-          </div>
-        ) : (
-          <div className="controls">
-            {!isMonitoring ? (
-              <button onClick={startMonitoring} className="btn success">Start Monitoring</button>
-            ) : (
-              <button onClick={stopMonitoring} className="btn danger">Stop Monitoring</button>
-            )}
-            <p className="status">
-              Status: <span className={isMonitoring ? 'active' : 'inactive'}>
-                {isMonitoring ? 'Monitoring...' : 'Idle'}
-              </span>
-            </p>
-          </div>
-        )}
+        <div className="controls">
+          {!isMonitoring ? (
+            <button onClick={startMonitoring} className="btn success">Start Monitoring</button>
+          ) : (
+            <button onClick={stopMonitoring} className="btn danger">Stop Monitoring</button>
+          )}
+          <p className="status">
+            Status: <span className={isMonitoring ? 'active' : 'inactive'}>
+              {isMonitoring ? 'Monitoring...' : 'Idle'}
+            </span>
+          </p>
+        </div>
 
         <div className="logs-container">
           <h2>Activity Log</h2>
