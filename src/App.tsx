@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import Tesseract from 'tesseract.js';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { Capacitor } from '@capacitor/core';
 
 function App() {
   const [isMonitoring, setIsMonitoring] = useState(false);
@@ -94,19 +95,22 @@ function App() {
     
     const fileName = `ScreenMonitor_Session_${new Date().toISOString().replace(/:/g, '-')}.txt`;
 
-    try {
-      // Capacitor Filesystem API
-      await Filesystem.writeFile({
-        path: fileName,
-        data: text,
-        directory: Directory.Documents,
-        encoding: Encoding.UTF8,
-      });
-      addLog(`Successfully saved file: ${fileName} in Documents`);
-    } catch (err) {
-      addLog(`Capacitor file write failed. Falling back to web download... Error: ${err}`);
-      
-      // Fallback for Web browser
+    if (Capacitor.isNativePlatform()) {
+      try {
+        // Capacitor Filesystem API (Native)
+        await Filesystem.writeFile({
+          path: fileName,
+          data: text,
+          directory: Directory.Documents,
+          encoding: Encoding.UTF8,
+        });
+        addLog(`Successfully saved file: ${fileName} in Documents`);
+      } catch (err) {
+        addLog(`Capacitor file write failed: ${err}`);
+      }
+    } else {
+      // Running in Web Browser - trigger actual file download
+      addLog('Running in browser, triggering file download...');
       const blob = new Blob([text], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
